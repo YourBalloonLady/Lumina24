@@ -161,9 +161,18 @@ async def back_to_shop(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("add_"))
 async def add(cb: CallbackQuery):
     uid, pid = cb.from_user.id, cb.data.split("_")[1]
+    
+    # Check if stock is available before adding to cart
+    if products[pid]['stock'] <= 0:
+        return await cb.answer("❌ Sorry, this item is currently out of stock!", show_alert=True)
+        
     carts.setdefault(uid, {})[pid] = carts.get(uid, {}).get(pid, 0) + 1
     summary, total = get_cart_summary(uid)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")], [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")],
+        [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]
+    ])
     await cb.message.answer(f"✅ Added!\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
 
 @dp.message(F.text == "🛒 My Cart")
@@ -196,6 +205,12 @@ async def check4(m: Message, state: FSMContext):
     uid = m.from_user.id
     summary, total = get_cart_summary(uid)
     full_address = f"{data['address']}, {m.text}"
+
+    # --- 2. ADD THE STOCK REDUCTION HERE ---
+    user_cart = carts.get(uid, {})
+    for pid, quantity in user_cart.items():
+        if pid in products:
+            products[pid]['stock'] -= quantity
     
     order_id = save_order(uid, data['name'], full_address, summary, total)
     
