@@ -22,10 +22,10 @@ DB_PATH = '/app/data/store.db'
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
-Bank: [Your Bank Name]
-Account Name: [Your Name/Business]
-Sort Code: 00-00-00
-Account Number: 12345678
+Bank: Barclays
+Account Name: Lumina - (Name Wont Match)
+Sort Code: 20-19-96
+Account Number: 63112098
 """
 
 # --- DATABASE SETUP ---
