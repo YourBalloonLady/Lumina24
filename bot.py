@@ -22,7 +22,7 @@ MY_USERNAME = "@YourUsername"
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
 Bank: Barclays
-Account Name: Lumina
+Account Name: Lumina (Name Wont Match)
 Sort Code: 20-19-96
 Account Number: 63112098
 
