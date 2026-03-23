@@ -34,7 +34,7 @@ Account Number: 63112098
 ⚠️ **IMPORTANT:** Use your **Order Number** or **Full Name** as the reference.
 """
 
-# --- DATABASE SETUP (Local SQLite for Orders) ---
+# --- DATABASE SETUP ---
 def init_db():
     try:
         db_dir = os.path.dirname(DB_PATH)
@@ -56,7 +56,6 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
-        logging.info("Local Order Database initialized.")
     except Exception as e:
         logging.error(f"Database error: {e}")
 
@@ -80,15 +79,13 @@ def update_db_order(order_id, status=None, tracking=None):
 
 # --- SUPABASE HELPERS ---
 async def get_live_products():
-    """Fetches items and stock directly from Supabase."""
     response = supabase.table("products").select("*").execute()
     return {p['id']: {"name": p['name'], "price": p['price'], "stock": p['stock']} for p in response.data}
 
 def update_supabase_stock(pid, new_stock):
-    """Updates the stock level in Supabase."""
     supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
 
-# --- INITIALIZE AIOGRAM ---
+# --- INITIALIZE ---
 logging.basicConfig(level=logging.INFO)
 init_db()
 dp = Dispatcher(storage=MemoryStorage())
@@ -118,9 +115,9 @@ main_kb = ReplyKeyboardMarkup(
 async def build_shop_kb():
     products = await get_live_products()
     rows = []
-    # Sort by ID so the list stays in order
-    sorted_p = sorted(products.items(), key=lambda x: int(x[0].replace('item', '')))
-    for pid, p in sorted_p:
+    # Sort by the number in 'itemX'
+    sorted_items = sorted(products.items(), key=lambda x: int(x[0].replace('item', '')))
+    for pid, p in sorted_items:
         label = f"{p['name']} - £{p['price']}"
         if p['stock'] <= 0: label += " (SOLD OUT)"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"view_{pid}")])
@@ -137,32 +134,24 @@ async def get_cart_summary(uid):
 # --- HANDLERS ---
 @dp.message(CommandStart())
 async def start(m: Message):
-    await m.answer("👋 Welcome to JJS Store! Use the menu below to browse our products.", reply_markup=main_kb)
+    await m.answer("👋 Welcome to JJS Store!", reply_markup=main_kb)
 
 @dp.message(F.text == "🛍 Shop Now")
 async def shop(m: Message):
     kb = await build_shop_kb()
     await m.answer("🛍 **Product Catalog**", reply_markup=kb)
 
-@dp.message(F.text == "❓ Help")
-async def help_handler(m: Message):
-    await m.answer("❓ **Help & FAQ**\n\n1. Select items in the Shop.\n2. Checkout and provide address.\n3. Complete Bank Transfer.\n4. We ship within 24-48 hours.")
-
-@dp.message(F.text == "📞 Contact")
-async def contact_handler(m: Message):
-    await m.answer(f"📞 **Customer Support**\n\nContact us directly: {MY_USERNAME}")
-
 @dp.callback_query(F.data.startswith("view_"))
 async def view(cb: CallbackQuery):
     pid = cb.data.split("_")[1]
     products = await get_live_products()
     p = products[pid]
-    stock_text = "In Stock" if p['stock'] > 0 else "OUT OF STOCK"
+    stock_status = f"✅ In Stock ({p['stock']})" if p['stock'] > 0 else "❌ OUT OF STOCK"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"add_{pid}")],
         [InlineKeyboardButton(text="⬅ Back", callback_data="back_shop")]
     ])
-    await cb.message.edit_text(f"📦 **{p['name']}**\nPrice: £{p['price']}\nStatus: {stock_text} ({p['stock']} left)", reply_markup=kb)
+    await cb.message.edit_text(f"📦 **{p['name']}**\nPrice: £{p['price']}\nStatus: {stock_status}", reply_markup=kb)
 
 @dp.callback_query(F.data == "back_shop")
 async def back_to_shop(cb: CallbackQuery):
@@ -173,18 +162,13 @@ async def back_to_shop(cb: CallbackQuery):
 async def add(cb: CallbackQuery):
     uid, pid = cb.from_user.id, cb.data.split("_")[1]
     products = await get_live_products()
-    
     if products[pid]['stock'] <= 0:
-        return await cb.answer("❌ Sorry, this item is out of stock!", show_alert=True)
+        return await cb.answer("❌ Out of stock!", show_alert=True)
     
     carts.setdefault(uid, {})[pid] = carts.get(uid, {}).get(pid, 0) + 1
     summary, total = await get_cart_summary(uid)
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")],
-        [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]
-    ])
-    await cb.message.answer(f"✅ Added to cart!\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")], [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]])
+    await cb.message.answer(f"✅ Added!\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
 
 @dp.message(F.text == "🛒 My Cart")
 async def show_cart(m: Message):
@@ -192,7 +176,7 @@ async def show_cart(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")]]) if total > 0 else None
     await m.answer(f"🛒 **Your Cart:**\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
 
-# --- CHECKOUT PROCESS ---
+# --- CHECKOUT ---
 @dp.callback_query(F.data == "start_checkout")
 async def check1(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer("📝 **Checkout**\nPlease enter your **Full Name**:")
@@ -218,20 +202,16 @@ async def check4(m: Message, state: FSMContext):
     summary, total = await get_cart_summary(uid)
     full_address = f"{data['address']}, {m.text}"
     
-    # 1. Update Supabase Stock
+    # Update Supabase
     user_cart = carts.get(uid, {})
     for pid, quantity in user_cart.items():
         if pid in products:
             new_stock = max(0, products[pid]['stock'] - quantity)
             update_supabase_stock(pid, new_stock)
 
-    # 2. Save Order to Local DB
     order_id = save_order(uid, data['name'], full_address, summary, total)
+    await m.answer(f"🏁 **Order #{order_id} Logged!**\n\n{BANK_DETAILS}")
     
-    # 3. Notify Customer
-    await m.answer(f"🏁 **Order #{order_id} Logged!**\n\n{BANK_DETAILS}\n\nWe will notify you here once payment is confirmed.")
-    
-    # 4. Notify Admin
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Mark Paid", callback_data=f"adm_p_{order_id}_{uid}")],
         [InlineKeyboardButton(text="🚚 Add Tracking", callback_data=f"adm_t_{order_id}_{uid}")]
@@ -242,11 +222,38 @@ async def check4(m: Message, state: FSMContext):
     await state.clear()
 
 # --- ADMIN COMMANDS ---
+
+@dp.message(Command("stock"))
+async def admin_stock_check(m: Message):
+    """Command for Admin to check Supabase inventory levels."""
+    if m.from_user.id != ADMIN_ID: return
+    products = await get_live_products()
+    sorted_p = sorted(products.items(), key=lambda x: int(x[0].replace('item', '')))
+    
+    report = "📊 **Live Inventory Report**\n\n"
+    for pid, p in sorted_p:
+        status = "🟢" if p['stock'] > 5 else "🟡" if p['stock'] > 0 else "🔴"
+        report += f"{status} `{pid}`: {p['name']} | **{p['stock']}** left\n"
+    
+    await m.answer(report)
+
+@dp.message(Command("admin_orders"))
+async def view_orders(m: Message):
+    if m.from_user.id != ADMIN_ID: return
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, total, status FROM orders ORDER BY id DESC LIMIT 10")
+    orders = cursor.fetchall()
+    conn.close()
+    if not orders: return await m.answer("No orders found.")
+    text = "📊 **Last 10 Orders:**\n\n" + "\n".join([f"#{o[0]} | {o[1]} | £{o[2]} | {o[3]}" for o in orders])
+    await m.answer(text)
+
 @dp.callback_query(F.data.startswith("adm_p_"))
 async def adm_paid(cb: CallbackQuery):
     _, _, oid, cid = cb.data.split("_")
     update_db_order(oid, status="Paid")
-    await cb.bot.send_message(cid, f"✅ **Payment Received for Order #{oid}!**\nYour order is being prepared.")
+    await cb.bot.send_message(cid, f"✅ **Payment Received for Order #{oid}!**")
     await cb.answer(f"Order #{oid} marked Paid")
 
 @dp.callback_query(F.data.startswith("adm_t_"))
@@ -261,26 +268,11 @@ async def adm_finish(m: Message, state: FSMContext):
     if m.from_user.id != ADMIN_ID: return
     data = await state.get_data()
     update_db_order(data['current_order_id'], tracking=m.text)
-    await m.bot.send_message(data['current_customer_id'], f"🚚 **Order #{data['current_order_id']} Shipped!**\n\nTracking: `{m.text}`")
-    await m.answer(f"✅ Tracking sent for Order #{data['current_order_id']}!")
+    await m.bot.send_message(data['current_customer_id'], f"🚚 **Order #{data['current_order_id']} Shipped!**\nTracking: `{m.text}`")
+    await m.answer(f"✅ Tracking sent!")
     await state.clear()
 
-@dp.message(Command("admin_orders"))
-async def view_orders(m: Message):
-    if m.from_user.id != ADMIN_ID: return
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, total, status FROM orders ORDER BY id DESC LIMIT 10")
-    orders = cursor.fetchall()
-    conn.close()
-    if not orders: return await m.answer("No orders found.")
-    text = "📊 **Last 10 Orders:**\n\n" + "\n".join([f"#{o[0]} | {o[1]} | £{o[2]} | {o[3]}" for o in orders])
-    await m.answer(text)
-
 async def main():
-    if not TOKEN:
-        logging.error("No BOT_TOKEN found!")
-        return
     bot = Bot(token=TOKEN)
     await dp.start_polling(bot)
 
