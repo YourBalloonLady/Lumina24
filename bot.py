@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sqlite3
+import os  
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -11,9 +12,13 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 )
 
-# --- CONFIGURATION ---
-TOKEN = "8648920522:AAFtmytiSj2ydEb9ZdXlR2Cgk7BeOoJyvcc"
-ADMIN_ID = 5839927114  
+# --- CONFIGURATION (Safe for Railway) ---
+# It will look for variables in Railway; if not found, it uses the backup ID.
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", 5839927114)) 
+
+# Path to your persistent database on Railway
+DB_PATH = '/app/data/store.db'
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
@@ -25,7 +30,9 @@ Account Number: 12345678
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('/app/data/store.db')
+    # Ensure the directory exists (helpful for first-time setup)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
@@ -43,7 +50,7 @@ def init_db():
     conn.close()
 
 def save_order(user_id, name, address, items, total):
-    conn = sqlite3.connect('store.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('INSERT INTO orders (user_id, name, address, items, total) VALUES (?, ?, ?, ?, ?)',
                    (user_id, name, address, items, total))
@@ -53,7 +60,7 @@ def save_order(user_id, name, address, items, total):
     return order_id
 
 def update_db_order(order_id, status=None, tracking=None):
-    conn = sqlite3.connect('store.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     if status:
         cursor.execute('UPDATE orders SET status = ? WHERE id = ?', (status, order_id))
@@ -77,7 +84,7 @@ class AdminState(StatesGroup):
     current_order_id = State()
     current_customer_id = State()
 
-# --- PRODUCTS (Restored to Full List for easy editing) ---
+# --- PRODUCTS ---
 products = {
     "item1": {"name": "BPC-157 & TB500 Blend 10mg", "price": 35, "stock": 10},
     "item2": {"name": "MOTS-C", "price": 55, "stock": 10},
@@ -177,12 +184,10 @@ async def check4(m: Message, state: FSMContext):
     summary, total = get_cart_summary(uid)
     full_address = f"{data['address']}, {postcode}"
     
-    # Save to Database
     order_id = save_order(uid, data['name'], full_address, summary, total)
     
     await m.answer(f"🏁 **Order #{order_id} Logged!**\n\n{BANK_DETAILS}\n📸 Please send a screenshot of payment to @yourusername")
     
-    # Admin Alert
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Mark Paid", callback_data=f"adm_p_{order_id}_{uid}")],
         [InlineKeyboardButton(text="🚚 Add Tracking", callback_data=f"adm_t_{order_id}_{uid}")]
