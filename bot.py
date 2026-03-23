@@ -25,7 +25,7 @@ Account Number: 12345678
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('store.db')
+    conn = sqlite3.connect('/app/data/store.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
