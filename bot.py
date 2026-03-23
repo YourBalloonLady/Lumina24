@@ -17,7 +17,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5839927114)) 
 # Fallback for local testing vs Railway Volume
 DB_PATH = os.getenv("DATABASE_URL", "/app/data/store.db") 
-MY_USERNAME = "@YourUsername" 
+MY_USERNAME = "@Admi_181" 
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
