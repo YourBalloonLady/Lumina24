@@ -15,40 +15,49 @@ from aiogram.types import (
 # --- CONFIGURATION ---
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5839927114)) 
-DB_PATH = '/app/data/store.db'
-MY_USERNAME = "@YourUsername" # <--- CHANGE THIS to your actual Telegram handle
+# Fallback for local testing vs Railway Volume
+DB_PATH = os.getenv("DATABASE_URL", "/app/data/store.db") 
+MY_USERNAME = "@YourUsername" 
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
 Bank: Barclays
-Account Name: Lumina - (Name Wont Match)
+Account Name: Lumina
 Sort Code: 20-19-96
 Account Number: 63112098
 
 ⚠️ **IMPORTANT:** Use your **Order Number** or **Full Name** as the reference.
-Once payment is made, we will process your order immediately.
 """
 
 # --- DATABASE SETUP ---
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            name TEXT,
-            address TEXT,
-            items TEXT,
-            total INTEGER,
-            status TEXT DEFAULT 'Pending',
-            tracking TEXT DEFAULT 'None'
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        # Create folder if it doesn't exist
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                name TEXT,
+                address TEXT,
+                items TEXT,
+                total INTEGER,
+                status TEXT DEFAULT 'Pending',
+                tracking TEXT DEFAULT 'None'
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logging.info("Database initialized successfully.")
+    except Exception as e:
+        logging.error(f"Database error: {e}")
 
+# Use DB_PATH consistently in all functions
 def save_order(user_id, name, address, items, total):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -73,6 +82,9 @@ def update_db_order(order_id, status=None, tracking=None):
 logging.basicConfig(level=logging.INFO)
 init_db()
 dp = Dispatcher(storage=MemoryStorage())
+
+# ... [The rest of your states, products, and handlers remain the same] ...
+# (Keep the rest of the code you had before from CheckoutState downwards)
 
 class CheckoutState(StatesGroup):
     waiting_for_name = State()
