@@ -12,7 +12,7 @@ from aiogram.types import (
 )
 
 # --- CONFIGURATION ---
-TOKEN = "PASTE_YOUR_NEW_TOKEN_HERE"
+TOKEN = "8648920522:AAFtmytiSj2ydEb9ZdXlR2Cgk7BeOoJyvcc"
 ADMIN_ID = 5839927114  
 
 BANK_DETAILS = """
