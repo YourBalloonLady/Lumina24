@@ -22,7 +22,11 @@ MY_USERNAME = "@Admi_181"
 # SUPABASE SETUP
 SUPA_URL = os.getenv("SUPABASE_URL")
 SUPA_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPA_URL, SUPA_KEY)
+
+if not SUPA_URL or not SUPA_KEY:
+    logging.error("❌ SUPABASE_URL or SUPABASE_KEY is missing from Railway Variables!")
+else:
+    supabase: Client = create_client(SUPA_URL, SUPA_KEY)
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
