@@ -26,10 +26,21 @@ MY_USERNAME = "@Admi_181"
 SUPA_URL = os.getenv("SUPABASE_URL")
 SUPA_KEY = os.getenv("SUPABASE_KEY")
 
-if not SUPA_URL or not SUPA_KEY:
-    logging.error("❌ SUPABASE_URL or SUPABASE_KEY is missing from Railway Variables!")
-else:
-    supabase: Client = create_client(SUPA_URL, SUPA_KEY)
+supabase: Client | None = None
+
+def init_supabase():
+    global supabase
+
+    if not SUPA_URL or not SUPA_KEY:
+        logging.error("❌ SUPABASE_URL or SUPABASE_KEY missing")
+        return
+
+    try:
+        supabase = create_client(SUPA_URL, SUPA_KEY)
+        logging.info("✅ Supabase connected")
+    except Exception as e:
+        logging.error(f"❌ Supabase init failed: {e}")
+        supabase = None
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
@@ -86,8 +97,23 @@ def update_db_order(order_id, status=None, tracking=None):
 
 # --- SUPABASE HELPERS ---
 async def get_live_products():
-    response = supabase.table("products").select("*").execute()
-    return {p['id']: {"name": p['name'], "price": p['price'], "stock": p['stock']} for p in response.data}
+    if not supabase:
+        logging.error("❌ Supabase not available")
+        return {}
+
+    try:
+        response = supabase.table("products").select("*").execute()
+        return {
+            p['id']: {
+                "name": p['name'],
+                "price": p['price'],
+                "stock": p['stock']
+            }
+            for p in response.data
+        }
+    except Exception as e:
+        logging.error(f"❌ Failed to fetch products: {e}")
+        return {}
 
 def update_supabase_stock(pid, new_stock):
     supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
@@ -280,6 +306,7 @@ async def adm_finish(m: Message, state: FSMContext):
     await state.clear()
 
 async def main():
+    init_supabase()   # 👈 ADD THIS
     bot = Bot(token=TOKEN)
     await dp.start_polling(bot)
 
