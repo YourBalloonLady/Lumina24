@@ -37,19 +37,19 @@ async def shop(m: Message):
 # --- SHOPPING & NAVIGATION ---
 @dp.callback_query(F.data == "back_to_cats")
 async def back_cats(cb: CallbackQuery):
-    await cb.answer() # FIXES LAG
+    await cb.answer()
     await cb.message.edit_text("<b>📂 Select a Category:</b>", reply_markup=kb.category_kb())
 
 @dp.callback_query(F.data.startswith("cat_"))
 async def show_items(cb: CallbackQuery):
-    await cb.answer() # FIXES LAG
+    await cb.answer()
     cat = cb.data.split("_", 1)[1]
     products = await db.get_live_products()
     await cb.message.edit_text(f"<b>📦 {cat}</b>", reply_markup=kb.item_list_kb(products, cat))
 
 @dp.callback_query(F.data.startswith("view_"))
 async def view_item(cb: CallbackQuery):
-    await cb.answer() # FIXES LAG
+    await cb.answer()
     pid = cb.data.split("_", 1)[1]
     products = await db.get_live_products()
     p = products.get(pid)
@@ -67,9 +67,9 @@ async def view_item(cb: CallbackQuery):
 async def change_qty(cb: CallbackQuery):
     _, action, pid = cb.data.split("_")
     db.update_cart(cb.from_user.id, pid, 1 if action == "plus" else -1)
-    await cb.answer("Cart Updated!") # FIXES LAG
+    await cb.answer("Cart Updated!")
     
-    # Update view if currently in cart
+    # Refresh view if user is looking at their cart
     if "Your Cart" in cb.message.text:
         products = await db.get_live_products()
         cart = db.get_user_cart(cb.from_user.id)
@@ -100,7 +100,7 @@ async def view_cart(event):
         await event.answer()
         await event.message.edit_text(text, reply_markup=kb.cart_edit_kb(products, cart))
 
-# --- MY ORDERS (FIXED) ---
+# --- MY ORDERS ---
 @dp.message(F.text == "📦 My Orders")
 async def customer_orders(m: Message):
     uid = m.from_user.id
@@ -144,13 +144,21 @@ async def checkout_finish(m: Message, state: FSMContext):
     uid = m.from_user.id
     products = await db.get_live_products()
     cart = db.get_user_cart(uid)
+    
     summary = "\n".join([f"• {products[pid]['name']} x{qty}" for pid, qty in cart.items() if pid in products])
     total = sum(products[pid]['price'] * qty for pid, qty in cart.items() if pid in products)
+    
+    # 1. Save locally
     oid = db.save_order(uid, data['name'], m.text, summary, total)
     
+    # 2. DEDUCT STOCK FROM SUPABASE
+    db.deduct_supabase_stock(cart)
+    
     await m.answer(f"🏁 <b>Order #{oid} Logged!</b>\n\n{BANK_DETAILS}")
+    
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")], [InlineKeyboardButton(text="🚚 Track", callback_data=f"adm_t_{oid}_{uid}")]])
     await m.bot.send_message(ADMIN_ID, f"🔔 <b>NEW ORDER #{oid}</b>\n👤 {data['name']}\n📍 {m.text}\n\n{summary}\n\nTotal: £{total}", reply_markup=admin_kb)
+    
     db.clear_cart(uid)
     await state.clear()
 
