@@ -5,7 +5,6 @@ import logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
     Message,
@@ -116,6 +115,7 @@ async def send_cart_message(target, products, user_cart):
         p = products.get(pid)
         if not p:
             continue
+
         line_total = float(p["price"]) * qty
         total += line_total
         lines.append(f"• {p['name']} ×{qty} — £{line_total:.2f}")
@@ -180,10 +180,16 @@ async def view_product(cb: CallbackQuery):
     buttons = []
 
     if stock > 0:
-        buttons.append([InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"qty_plus_{pid}")])
+        buttons.append([
+            InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"qty_plus_{pid}")
+        ])
 
-    buttons.append([InlineKeyboardButton(text="🛒 View Cart", callback_data="view_cart")])
-    buttons.append([InlineKeyboardButton(text="⬅ Back", callback_data="back_to_cats")])
+    buttons.append([
+        InlineKeyboardButton(text="🛒 View Cart", callback_data="view_cart")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="⬅ Back", callback_data="back_to_cats")
+    ])
 
     product_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -275,6 +281,7 @@ async def start_checkout(cb: CallbackQuery, state: FSMContext):
 
     uid = cb.from_user.id
     user_cart = db.get_user_cart(uid)
+
     if not user_cart:
         await cb.message.edit_text("🛒 Your cart is empty.")
         return
@@ -448,7 +455,6 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     uid = cb.from_user.id
-    cart = db.get_user_cart(uid)
 
     oid = db.save_order(
         uid,
@@ -484,25 +490,6 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
     db.clear_cart(uid)
     await state.clear()
 
-def get_user_orders(uid, limit=10):
-    """Fetch recent orders for a specific user from Supabase."""
-    if not supabase:
-        return []
-
-    try:
-        res = (
-            supabase.table("orders")
-            .select("id, total, status, tracking, items")
-            .eq("user_id", uid)
-            .order("id", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return res.data or []
-    except Exception as e:
-        logging.error(f"Order Fetch Error: {e}")
-        return []
-
 
 # -----------------------------
 # ADMIN
@@ -525,7 +512,7 @@ async def main():
     db.init_db()
     bot = Bot(
         token=TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        default=DefaultBotProperties(parse_mode="HTML"),
     )
     await dp.start_polling(bot)
 
