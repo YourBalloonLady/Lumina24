@@ -41,7 +41,7 @@ BANK_DETAILS = """
 🏦 <b>PAYMENT DETAILS</b>
 
 Bank: Barclays
-Account Name: Lumina
+Account Name: Lumina (Name Wont Match)
 Sort Code: 20-19-96
 Account Number: 63112098
 
@@ -173,7 +173,7 @@ def build_cart_kb(uid: int):
 # -----------------------------
 @dp.message(CommandStart())
 async def start(m: Message):
-    await m.answer("👋 Welcome to JJS Store!", reply_markup=main_kb)
+    await m.answer("👋 Welcome to the Lumina Store!", reply_markup=main_kb)
 
 @dp.message(F.text == "🛍 Shop Now")
 async def shop(m: Message):
