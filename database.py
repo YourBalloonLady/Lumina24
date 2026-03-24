@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # SUPABASE
 # -----------------------------
 supabase: Optional[Client] = None
+
 if SUPA_URL and SUPA_KEY:
     try:
         supabase = create_client(SUPA_URL, SUPA_KEY)
@@ -113,7 +114,13 @@ def deduct_supabase_stock(cart_items):
 
     try:
         for pid, qty in cart_items.items():
-            res = supabase.table("products").select("stock").eq("id", pid).single().execute()
+            res = (
+                supabase.table("products")
+                .select("stock")
+                .eq("id", pid)
+                .single()
+                .execute()
+            )
 
             if res.data:
                 current_stock = int(res.data.get("stock", 0))
@@ -163,6 +170,7 @@ def update_db_order(order_id, status=None, tracking=None):
 
     try:
         upd = {}
+
         if status is not None:
             upd["status"] = status
         if tracking is not None:
@@ -172,6 +180,26 @@ def update_db_order(order_id, status=None, tracking=None):
             supabase.table("orders").update(upd).eq("id", order_id).execute()
     except Exception as e:
         logging.error(f"Order Update Error: {e}")
+
+
+def get_user_orders(uid, limit=10):
+    """Fetch recent orders for a specific user from Supabase."""
+    if not supabase:
+        return []
+
+    try:
+        res = (
+            supabase.table("orders")
+            .select("id, total, status, tracking, items")
+            .eq("user_id", uid)
+            .order("id", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        logging.error(f"Order Fetch Error: {e}")
+        return []
 
 
 # -----------------------------
