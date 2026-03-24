@@ -1,21 +1,5 @@
 import os
-import logging
-from supabase import create_
-
-SUPA_URL = os.getenv("SUPA_URL")
-SUPA_KEY = os.getenv("SUPA_KEY")
-
-supabase = None
-
-try:
-    if not SUPA_URL or not SUPA_KEY:
-        raise ValueError("Missing SUPA_URL or SUPA_KEY")
-
-    supabase = create_client(SUPA_URL, SUPA_KEY)
-    logging.info("✅ Supabase connected")
-except Exception as e:
-    logging.error(f"❌ Supabase init failed: {e}")
-    supabase = None
+os.environ["HTTPX_CLIENT_KWARGS"] = "{}"
 
 import asyncio
 import logging
@@ -28,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
-from aiogram..default import DefaultBotProperties
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
@@ -49,7 +33,7 @@ MY_USERNAME = "@Admi_181"
 SUPA_URL = os.getenv("SUPABASE_URL")
 SUPA_KEY = os.getenv("SUPABASE_KEY")
 
-supabase:  | None = None
+supabase: Client | None = None
 
 logging.basicConfig(level=logging.INFO)
 
@@ -73,7 +57,7 @@ def init_supabase():
         logging.error("❌ SUPABASE_URL or SUPABASE_KEY missing")
         return
     try:
-        supabase = create_(SUPA_URL, SUPA_KEY)
+        supabase = create_client(SUPA_URL, SUPA_KEY)
         logging.info("✅ Supabase connected")
     except Exception as e:
         logging.error(f"❌ Supabase init failed: {e}")
