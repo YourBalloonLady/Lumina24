@@ -11,13 +11,11 @@ supabase: Client = create_client(SUPA_URL, SUPA_KEY) if SUPA_URL else None
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    # Orders Table
     conn.execute("""CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         user_id INTEGER, name TEXT, address TEXT, 
         items TEXT, total INTEGER, status TEXT DEFAULT 'Pending', 
         tracking TEXT DEFAULT 'None')""")
-    # Persistent Cart Table (Fixes cart loss on restart)
     conn.execute("""CREATE TABLE IF NOT EXISTS cart (
         user_id INTEGER, product_id TEXT, quantity INTEGER,
         PRIMARY KEY (user_id, product_id))""")
@@ -32,6 +30,20 @@ async def get_live_products():
     except Exception as e:
         logging.error(f"Supabase error: {e}")
         return {}
+
+def deduct_supabase_stock(cart_items):
+    """Subtracts purchased quantities from Supabase inventory."""
+    if not supabase: return
+    try:
+        res = supabase.table("products").select("id", "stock").execute()
+        current_stock = {p["id"]: p["stock"] for p in res.data}
+        for pid, qty in cart_items.items():
+            if pid in current_stock:
+                new_stock = max(0, current_stock[pid] - qty)
+                supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
+                logging.info(f"✅ Stock updated for {pid}: {new_stock}")
+    except Exception as e:
+        logging.error(f"❌ Failed to deduct stock: {e}")
 
 def update_cart(uid, pid, delta):
     conn = sqlite3.connect(DB_PATH)
@@ -72,4 +84,3 @@ def save_order(uid, name, address, items, total):
     conn.commit()
     conn.close()
     return oid
-
