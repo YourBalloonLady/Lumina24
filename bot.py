@@ -1,10 +1,10 @@
 import os
-os.environ["HTTPX_CLIENT_KWARGS"] = "{}" # This fixes the 'proxy' error
+# This fixes the 'proxy' error by ensuring httpx doesn't look for one
+os.environ["HTTPX_CLIENT_KWARGS"] = "{}" 
 
 import asyncio
 import logging
 import sqlite3
-import os  
 from supabase import create_client, Client
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
@@ -30,11 +30,9 @@ supabase: Client | None = None
 
 def init_supabase():
     global supabase
-
     if not SUPA_URL or not SUPA_KEY:
         logging.error("❌ SUPABASE_URL or SUPABASE_KEY missing")
         return
-
     try:
         supabase = create_client(SUPA_URL, SUPA_KEY)
         logging.info("✅ Supabase connected")
@@ -100,7 +98,6 @@ async def get_live_products():
     if not supabase:
         logging.error("❌ Supabase not available")
         return {}
-
     try:
         response = supabase.table("products").select("*").execute()
         return {
@@ -116,7 +113,10 @@ async def get_live_products():
         return {}
 
 def update_supabase_stock(pid, new_stock):
-    supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
+    try:
+        supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
+    except Exception as e:
+        logging.error(f"❌ Failed to update stock for {pid}: {e}")
 
 # --- INITIALIZE ---
 logging.basicConfig(level=logging.INFO)
@@ -148,6 +148,8 @@ main_kb = ReplyKeyboardMarkup(
 async def build_shop_kb():
     products = await get_live_products()
     rows = []
+    if not products:
+        return None
     # Sort by the number in 'itemX'
     sorted_items = sorted(products.items(), key=lambda x: int(x[0].replace('item', '')))
     for pid, p in sorted_items:
@@ -171,14 +173,22 @@ async def start(m: Message):
 
 @dp.message(F.text == "🛍 Shop Now")
 async def shop(m: Message):
+    await m.bot.send_chat_action(m.chat.id, "typing")
     kb = await build_shop_kb()
-    await m.answer("🛍 **Product Catalog**", reply_markup=kb)
+    if kb:
+        await m.answer("🛍 **Product Catalog**", reply_markup=kb)
+    else:
+        await m.answer("❌ The shop is currently empty or loading. Try again in a second!")
 
 @dp.callback_query(F.data.startswith("view_"))
 async def view(cb: CallbackQuery):
+    await cb.answer() # Stops spinning clock
     pid = cb.data.split("_")[1]
     products = await get_live_products()
-    p = products[pid]
+    p = products.get(pid)
+    if not p:
+        return await cb.message.answer("❌ Product not found.")
+        
     stock_status = f"✅ In Stock ({p['stock']})" if p['stock'] > 0 else "❌ OUT OF STOCK"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"add_{pid}")],
@@ -188,20 +198,31 @@ async def view(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "back_shop")
 async def back_to_shop(cb: CallbackQuery):
+    await cb.answer()
     kb = await build_shop_kb()
-    await cb.message.edit_text("🛍 **Product Catalog**", reply_markup=kb)
+    if kb:
+        await cb.message.edit_text("🛍 **Product Catalog**", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("add_"))
 async def add(cb: CallbackQuery):
-    uid, pid = cb.from_user.id, cb.data.split("_")[1]
+    pid = cb.data.split("_")[1]
+    uid = cb.from_user.id
     products = await get_live_products()
-    if products[pid]['stock'] <= 0:
-        return await cb.answer("❌ Out of stock!", show_alert=True)
+    p = products.get(pid)
+    
+    if not p or p['stock'] <= 0:
+        await cb.answer("❌ Out of stock!", show_alert=True)
+        return
     
     carts.setdefault(uid, {})[pid] = carts.get(uid, {}).get(pid, 0) + 1
     summary, total = await get_cart_summary(uid)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")], [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]])
-    await cb.message.answer(f"✅ Added!\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
+    
+    await cb.answer(f"Added {p['name']}!") # Small toast notification
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Checkout", callback_data="start_checkout")], 
+        [InlineKeyboardButton(text="🛍 Continue Shopping", callback_data="back_shop")]
+    ])
+    await cb.message.answer(f"✅ Item added to cart!\n\n{summary}\n\n💰 **Total: £{total}**", reply_markup=kb)
 
 @dp.message(F.text == "🛒 My Cart")
 async def show_cart(m: Message):
@@ -212,6 +233,7 @@ async def show_cart(m: Message):
 # --- CHECKOUT ---
 @dp.callback_query(F.data == "start_checkout")
 async def check1(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await cb.message.answer("📝 **Checkout**\nPlease enter your **Full Name**:")
     await state.set_state(CheckoutState.waiting_for_name)
 
@@ -258,16 +280,15 @@ async def check4(m: Message, state: FSMContext):
 
 @dp.message(Command("stock"))
 async def admin_stock_check(m: Message):
-    """Command for Admin to check Supabase inventory levels."""
     if m.from_user.id != ADMIN_ID: return
     products = await get_live_products()
+    if not products: return await m.answer("Inventory empty or failed to load.")
     sorted_p = sorted(products.items(), key=lambda x: int(x[0].replace('item', '')))
     
     report = "📊 **Live Inventory Report**\n\n"
     for pid, p in sorted_p:
         status = "🟢" if p['stock'] > 5 else "🟡" if p['stock'] > 0 else "🔴"
         report += f"{status} `{pid}`: {p['name']} | **{p['stock']}** left\n"
-    
     await m.answer(report)
 
 @dp.message(Command("admin_orders"))
@@ -284,13 +305,15 @@ async def view_orders(m: Message):
 
 @dp.callback_query(F.data.startswith("adm_p_"))
 async def adm_paid(cb: CallbackQuery):
+    await cb.answer()
     _, _, oid, cid = cb.data.split("_")
     update_db_order(oid, status="Paid")
     await cb.bot.send_message(cid, f"✅ **Payment Received for Order #{oid}!**")
-    await cb.answer(f"Order #{oid} marked Paid")
+    await cb.message.answer(f"✅ Order #{oid} marked Paid")
 
 @dp.callback_query(F.data.startswith("adm_t_"))
 async def adm_track(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     _, _, oid, cid = cb.data.split("_")
     await state.update_data(current_order_id=oid, current_customer_id=cid)
     await state.set_state(AdminState.waiting_for_tracking_num)
@@ -306,7 +329,7 @@ async def adm_finish(m: Message, state: FSMContext):
     await state.clear()
 
 async def main():
-    init_supabase()   # 👈 ADD THIS
+    init_supabase()
     bot = Bot(token=TOKEN)
     await dp.start_polling(bot)
 
