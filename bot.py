@@ -23,6 +23,7 @@ class AdminState(StatesGroup):
 
 dp = Dispatcher(storage=MemoryStorage())
 
+# --- SHOP NAVIGATION ---
 @dp.message(F.text == "/start")
 async def cmd_start(m: Message):
     await m.answer("👋 Welcome to Lumina Store!", reply_markup=kb.main_kb)
@@ -53,11 +54,12 @@ async def view_item(cb: CallbackQuery):
     
     parent_cat = next((cat for cat, ids in kb.CATEGORIES.items() if pid in ids), "back_to_cats")
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"qty_plus_{pid}")] if p['stock'] > 0 else [],
+        [InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"qty_plus_{pid}")] if p.get('stock', 0) > 0 else [InlineKeyboardButton(text="❌ Out of Stock", callback_data="none")],
         [InlineKeyboardButton(text="⬅ Back", callback_data=f"cat_{parent_cat}")]
     ])
-    await cb.message.edit_text(f"<b>{p['name']}</b>\nPrice: £{p['price']}\nStock: {p['stock']}", reply_markup=inline_kb)
+    await cb.message.edit_text(f"<b>{p['name']}</b>\nPrice: £{p['price']}\nStock: {p.get('stock', 0)}", reply_markup=inline_kb)
 
+# --- CART MANAGEMENT ---
 @dp.callback_query(F.data.startswith("qty_"))
 async def change_qty(cb: CallbackQuery):
     _, action, pid = cb.data.split("_")
@@ -94,15 +96,15 @@ async def view_cart(event):
         await event.answer()
         await event.message.edit_text(text, reply_markup=kb.cart_edit_kb(products, cart))
 
-# --- MY ORDERS (SUPABASE VERSION) ---
+# --- ORDERS ---
 @dp.message(F.text == "📦 My Orders")
 async def customer_orders(m: Message):
     uid = m.from_user.id
     if not db.supabase: return
     res = db.supabase.table("orders").select("id", "status").eq("user_id", uid).order("id", desc=True).limit(5).execute()
-    rows = res.data
-    if not rows: return await m.answer("No orders found!")
-    buttons = [[InlineKeyboardButton(text=f"🔍 Track #{r['id']} ({r['status']})", callback_data=f"track_{r['id']}")] for r in rows]
+    if not res.data: return await m.answer("No orders found!")
+    
+    buttons = [[InlineKeyboardButton(text=f"🔍 Track #{r['id']} ({r['status']})", callback_data=f"track_{r['id']}")] for r in res.data]
     await m.answer("📦 <b>Your Recent Orders:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 @dp.callback_query(F.data.startswith("track_"))
@@ -114,7 +116,7 @@ async def track_detail(cb: CallbackQuery):
         r = res.data[0]
         await cb.message.answer(f"<b>📄 Order #{oid} Details</b>\n\nStatus: {r['status']}\nTracking: <code>{r['tracking']}</code>\n\nItems:\n{r['items']}\nTotal: £{r['total']}")
 
-# --- CHECKOUT & ADMIN ---
+# --- CHECKOUT ---
 @dp.callback_query(F.data == "start_checkout")
 async def checkout_start(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -133,24 +135,36 @@ async def checkout_finish(m: Message, state: FSMContext):
     uid = m.from_user.id
     products = await db.get_live_products()
     cart = db.get_user_cart(uid)
+    
+    if not cart: return await m.answer("Cart error. Please try again.")
+
     summary = "\n".join([f"• {products[pid]['name']} x{qty}" for pid, qty in cart.items() if pid in products])
     total = sum(products[pid]['price'] * qty for pid, qty in cart.items() if pid in products)
     
-    oid = db.save_order(uid, data['name'], m.text, summary, total)
+    # 1. Deduct Stock from Supabase
     db.deduct_supabase_stock(cart)
     
+    # 2. Save Order to Supabase
+    oid = db.save_order(uid, data['name'], m.text, summary, total)
+    
+    # 3. Success Message & Admin Notify
     await m.answer(f"🏁 <b>Order #{oid} Logged!</b>\n\n{BANK_DETAILS}")
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")], [InlineKeyboardButton(text="🚚 Track", callback_data=f"adm_t_{oid}_{uid}")]])
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")], 
+        [InlineKeyboardButton(text="🚚 Track", callback_data=f"adm_t_{oid}_{uid}")]
+    ])
     await m.bot.send_message(ADMIN_ID, f"🔔 <b>NEW ORDER #{oid}</b>\n👤 {data['name']}\n📍 {m.text}\n\n{summary}\n\nTotal: £{total}", reply_markup=admin_kb)
+    
     db.clear_cart(uid)
     await state.clear()
 
+# --- ADMIN ACTIONS ---
 @dp.callback_query(F.data.startswith("adm_p_"))
 async def admin_paid(cb: CallbackQuery):
     _, _, oid, cid = cb.data.split("_")
     db.update_db_order(oid, status="Paid")
     await cb.bot.send_message(cid, f"✅ <b>Payment Received for Order #{oid}!</b>")
-    await cb.answer("Updated Supabase")
+    await cb.answer("Order marked as Paid")
 
 @dp.callback_query(F.data.startswith("adm_t_"))
 async def admin_track_start(cb: CallbackQuery, state: FSMContext):
@@ -165,7 +179,7 @@ async def admin_track_finish(m: Message, state: FSMContext):
     data = await state.get_data()
     db.update_db_order(data["oid"], tracking=m.text)
     await m.bot.send_message(data['cid'], f"🚚 <b>Order #{data['oid']} Shipped!</b>\nTracking: <code>{m.text}</code>")
-    await m.answer("✅ Tracking updated!")
+    await m.answer("✅ Tracking sent to customer!")
     await state.clear()
 
 async def main():
