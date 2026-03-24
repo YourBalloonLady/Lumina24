@@ -1,4 +1,3 @@
 aiogram==3.10.0
 supabase==2.4.0
-httpx<0.28
-httpcore<1.0.6
+httpx==0.27.2
