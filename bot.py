@@ -1,3 +1,6 @@
+import os
+os.environ["HTTPX_CLIENT_KWARGS"] = "{}" # This fixes the 'proxy' error
+
 import asyncio
 import logging
 import sqlite3
