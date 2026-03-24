@@ -1,5 +1,4 @@
 import os, asyncio, logging
-import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
@@ -13,7 +12,6 @@ import keyboards as kb
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5839927114))
-DB_PATH = os.getenv("DATABASE_URL", "store.db")
 BANK_DETAILS = """🏦 <b>PAYMENT DETAILS</b>\nBank: Barclays\nSort: 20-19-96\nAcc: 63112098\n⚠️ Reference: <b>Order Number</b> or <b>Full Name</b>"""
 
 class CheckoutState(StatesGroup):
@@ -25,7 +23,6 @@ class AdminState(StatesGroup):
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- COMMANDS ---
 @dp.message(F.text == "/start")
 async def cmd_start(m: Message):
     await m.answer("👋 Welcome to Lumina Store!", reply_markup=kb.main_kb)
@@ -34,7 +31,6 @@ async def cmd_start(m: Message):
 async def shop(m: Message):
     await m.answer("<b>📂 Select a Category:</b>", reply_markup=kb.category_kb())
 
-# --- SHOPPING & NAVIGATION ---
 @dp.callback_query(F.data == "back_to_cats")
 async def back_cats(cb: CallbackQuery):
     await cb.answer()
@@ -62,14 +58,12 @@ async def view_item(cb: CallbackQuery):
     ])
     await cb.message.edit_text(f"<b>{p['name']}</b>\nPrice: £{p['price']}\nStock: {p['stock']}", reply_markup=inline_kb)
 
-# --- CART LOGIC ---
 @dp.callback_query(F.data.startswith("qty_"))
 async def change_qty(cb: CallbackQuery):
     _, action, pid = cb.data.split("_")
     db.update_cart(cb.from_user.id, pid, 1 if action == "plus" else -1)
     await cb.answer("Cart Updated!")
     
-    # Refresh view if user is looking at their cart
     if "Your Cart" in cb.message.text:
         products = await db.get_live_products()
         cart = db.get_user_cart(cb.from_user.id)
@@ -100,30 +94,25 @@ async def view_cart(event):
         await event.answer()
         await event.message.edit_text(text, reply_markup=kb.cart_edit_kb(products, cart))
 
-# --- MY ORDERS ---
+# --- MY ORDERS (SUPABASE VERSION) ---
 @dp.message(F.text == "📦 My Orders")
 async def customer_orders(m: Message):
     uid = m.from_user.id
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, status FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 5", (uid,))
-    rows = cursor.fetchall()
-    conn.close()
-    if not rows: return await m.answer("You haven't placed any orders yet!")
-    buttons = [[InlineKeyboardButton(text=f"🔍 Track #{r[0]} ({r[1]})", callback_data=f"track_{r[0]}")] for r in rows]
+    if not db.supabase: return
+    res = db.supabase.table("orders").select("id", "status").eq("user_id", uid).order("id", desc=True).limit(5).execute()
+    rows = res.data
+    if not rows: return await m.answer("No orders found!")
+    buttons = [[InlineKeyboardButton(text=f"🔍 Track #{r['id']} ({r['status']})", callback_data=f"track_{r['id']}")] for r in rows]
     await m.answer("📦 <b>Your Recent Orders:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 @dp.callback_query(F.data.startswith("track_"))
 async def track_detail(cb: CallbackQuery):
     await cb.answer()
     oid = cb.data.split("_")[1]
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT status, tracking, items, total FROM orders WHERE id = ?", (oid,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        await cb.message.answer(f"<b>📄 Order #{oid} Details</b>\n\nStatus: {row[0]}\nTracking: <code>{row[1]}</code>\n\nItems:\n{row[2]}\nTotal: £{row[3]}")
+    res = db.supabase.table("orders").select("*").eq("id", oid).execute()
+    if res.data:
+        r = res.data[0]
+        await cb.message.answer(f"<b>📄 Order #{oid} Details</b>\n\nStatus: {r['status']}\nTracking: <code>{r['tracking']}</code>\n\nItems:\n{r['items']}\nTotal: £{r['total']}")
 
 # --- CHECKOUT & ADMIN ---
 @dp.callback_query(F.data == "start_checkout")
@@ -144,32 +133,24 @@ async def checkout_finish(m: Message, state: FSMContext):
     uid = m.from_user.id
     products = await db.get_live_products()
     cart = db.get_user_cart(uid)
-    
     summary = "\n".join([f"• {products[pid]['name']} x{qty}" for pid, qty in cart.items() if pid in products])
     total = sum(products[pid]['price'] * qty for pid, qty in cart.items() if pid in products)
     
-    # 1. Save locally
     oid = db.save_order(uid, data['name'], m.text, summary, total)
-    
-    # 2. DEDUCT STOCK FROM SUPABASE
     db.deduct_supabase_stock(cart)
     
     await m.answer(f"🏁 <b>Order #{oid} Logged!</b>\n\n{BANK_DETAILS}")
-    
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")], [InlineKeyboardButton(text="🚚 Track", callback_data=f"adm_t_{oid}_{uid}")]])
     await m.bot.send_message(ADMIN_ID, f"🔔 <b>NEW ORDER #{oid}</b>\n👤 {data['name']}\n📍 {m.text}\n\n{summary}\n\nTotal: £{total}", reply_markup=admin_kb)
-    
     db.clear_cart(uid)
     await state.clear()
 
 @dp.callback_query(F.data.startswith("adm_p_"))
 async def admin_paid(cb: CallbackQuery):
     _, _, oid, cid = cb.data.split("_")
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE orders SET status = 'Paid' WHERE id = ?", (oid,))
-    conn.commit(); conn.close()
+    db.update_db_order(oid, status="Paid")
     await cb.bot.send_message(cid, f"✅ <b>Payment Received for Order #{oid}!</b>")
-    await cb.answer("Notified customer")
+    await cb.answer("Updated Supabase")
 
 @dp.callback_query(F.data.startswith("adm_t_"))
 async def admin_track_start(cb: CallbackQuery, state: FSMContext):
@@ -182,11 +163,9 @@ async def admin_track_start(cb: CallbackQuery, state: FSMContext):
 @dp.message(AdminState.waiting_for_tracking)
 async def admin_track_finish(m: Message, state: FSMContext):
     data = await state.get_data()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE orders SET tracking = ? WHERE id = ?", (m.text, data["oid"]))
-    conn.commit(); conn.close()
+    db.update_db_order(data["oid"], tracking=m.text)
     await m.bot.send_message(data['cid'], f"🚚 <b>Order #{data['oid']} Shipped!</b>\nTracking: <code>{m.text}</code>")
-    await m.answer("✅ Tracking sent!")
+    await m.answer("✅ Tracking updated!")
     await state.clear()
 
 async def main():
