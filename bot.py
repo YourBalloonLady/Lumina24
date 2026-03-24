@@ -54,13 +54,211 @@ async def shop(m: Message):
     )
 
 
+@dp.message(F.text == "🛒 My Cart")
+async def my_cart(m: Message):
+    uid = m.from_user.id
+    user_cart = db.get_user_cart(uid)
+    products = await db.get_live_products()
+
+    if not user_cart:
+        await m.answer("🛒 Your cart is empty.")
+        return
+
+    await send_cart_message(m, products, user_cart)
+
+
+@dp.message(F.text == "📦 My Orders")
+async def my_orders(m: Message):
+    await m.answer("📦 Order lookup is not enabled yet.")
+
+
+@dp.message(F.text == "❓ Help")
+async def help_handler(m: Message):
+    await m.answer(
+        "Use <b>Shop Now</b> to browse categories and <b>My Cart</b> to review your items."
+    )
+
+
+@dp.message(F.text == "📞 Contact")
+async def contact_handler(m: Message):
+    await m.answer("📞 Support is available via your usual contact method.")
+
+
+# -----------------------------
+# SHOP / CART HELPERS
+# -----------------------------
+async def send_cart_message(target, products, user_cart):
+    lines = ["🛒 <b>Your Cart</b>\n"]
+    total = 0.0
+
+    for pid, qty in user_cart.items():
+        p = products.get(pid)
+        if not p:
+            continue
+        line_total = float(p["price"]) * qty
+        total += line_total
+        lines.append(f"• {p['name']} ×{qty} — £{line_total:.2f}")
+
+    lines.append("")
+    lines.append(f"💰 <b>Total: £{total:.2f}</b>")
+
+    text = "\n".join(lines)
+
+    if isinstance(target, Message):
+        await target.answer(
+            text,
+            reply_markup=kb.cart_edit_kb(products, user_cart)
+        )
+    else:
+        await target.message.edit_text(
+            text,
+            reply_markup=kb.cart_edit_kb(products, user_cart)
+        )
+
+
+# -----------------------------
+# CATEGORY / PRODUCT CALLBACKS
+# -----------------------------
+@dp.callback_query(F.data.startswith("cat_"))
+async def open_category(cb: CallbackQuery):
+    await cb.answer()
+
+    category_name = cb.data.replace("cat_", "", 1)
+    products = await db.get_live_products()
+
+    await cb.message.edit_text(
+        f"<b>🛍 {category_name}</b>",
+        reply_markup=kb.item_list_kb(products, category_name)
+    )
+
+
+@dp.callback_query(F.data == "back_to_cats")
+async def back_to_categories(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.edit_text(
+        "<b>📂 Select a Category:</b>",
+        reply_markup=kb.category_kb()
+    )
+
+
+@dp.callback_query(F.data.startswith("view_"))
+async def view_product(cb: CallbackQuery):
+    await cb.answer()
+
+    pid = cb.data.replace("view_", "", 1)
+    products = await db.get_live_products()
+    p = products.get(pid)
+
+    if not p:
+        await cb.message.answer("❌ Product not found.")
+        return
+
+    stock = int(p.get("stock", 0))
+    status = f"✅ In stock ({stock})" if stock > 0 else "❌ Out of stock"
+
+    buttons = []
+
+    if stock > 0:
+        buttons.append([InlineKeyboardButton(text="🛒 Add to Cart", callback_data=f"qty_plus_{pid}")])
+
+    buttons.append([InlineKeyboardButton(text="🛒 View Cart", callback_data="view_cart")])
+    buttons.append([InlineKeyboardButton(text="⬅ Back", callback_data="back_to_cats")])
+
+    product_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await cb.message.edit_text(
+        f"<b>📦 {p['name']}</b>\n"
+        f"💰 Price: £{float(p['price']):.2f}\n"
+        f"{status}",
+        reply_markup=product_kb
+    )
+
+
+@dp.callback_query(F.data == "view_cart")
+async def view_cart(cb: CallbackQuery):
+    await cb.answer()
+
+    uid = cb.from_user.id
+    user_cart = db.get_user_cart(uid)
+    products = await db.get_live_products()
+
+    if not user_cart:
+        await cb.message.edit_text("🛒 Your cart is empty.")
+        return
+
+    await send_cart_message(cb, products, user_cart)
+
+
+@dp.callback_query(F.data.startswith("qty_plus_"))
+async def qty_plus(cb: CallbackQuery):
+    await cb.answer()
+
+    uid = cb.from_user.id
+    pid = cb.data.replace("qty_plus_", "", 1)
+
+    products = await db.get_live_products()
+    p = products.get(pid)
+
+    if not p:
+        await cb.answer("Product not found.", show_alert=True)
+        return
+
+    stock = int(p.get("stock", 0))
+    user_cart = db.get_user_cart(uid)
+    current_qty = user_cart.get(pid, 0)
+
+    if stock <= 0:
+        await cb.answer("Out of stock.", show_alert=True)
+        return
+
+    if current_qty >= stock:
+        await cb.answer("No more stock available.", show_alert=True)
+        return
+
+    db.update_cart(uid, pid, 1)
+
+    user_cart = db.get_user_cart(uid)
+    await send_cart_message(cb, products, user_cart)
+
+
+@dp.callback_query(F.data.startswith("qty_minus_"))
+async def qty_minus(cb: CallbackQuery):
+    await cb.answer()
+
+    uid = cb.from_user.id
+    pid = cb.data.replace("qty_minus_", "", 1)
+
+    db.update_cart(uid, pid, -1)
+
+    user_cart = db.get_user_cart(uid)
+    products = await db.get_live_products()
+
+    if not user_cart:
+        await cb.message.edit_text("🛒 Your cart is empty.")
+        return
+
+    await send_cart_message(cb, products, user_cart)
+
+
+@dp.callback_query(F.data == "ignore")
+async def ignore_button(cb: CallbackQuery):
+    await cb.answer()
+
+
 # -----------------------------
 # CHECKOUT FLOW
 # -----------------------------
 @dp.callback_query(F.data == "start_checkout")
 async def start_checkout(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    profile = db.get_profile(cb.from_user.id)
+
+    uid = cb.from_user.id
+    user_cart = db.get_user_cart(uid)
+    if not user_cart:
+        await cb.message.edit_text("🛒 Your cart is empty.")
+        return
+
+    profile = db.get_profile(uid)
 
     if profile:
         text = (
@@ -231,7 +429,6 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     cart = db.get_user_cart(uid)
 
-    db.deduct_supabase_stock(cart)
     oid = db.save_order(
         uid,
         data["final_name"],
@@ -250,7 +447,6 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
     admin_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")],
-            [InlineKeyboardButton(text="🚚 Track", callback_data=f"adm_t_{oid}_{uid}")],
         ]
     )
 
