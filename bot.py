@@ -69,7 +69,28 @@ async def my_cart(m: Message):
 
 @dp.message(F.text == "📦 My Orders")
 async def my_orders(m: Message):
-    await m.answer("📦 Order lookup is not enabled yet.")
+    orders = db.get_user_orders(m.from_user.id)
+
+    if not orders:
+        await m.answer("📦 You have no orders yet.")
+        return
+
+    lines = ["📦 <b>Your Recent Orders</b>\n"]
+
+    for order in orders:
+        order_id = order.get("id")
+        total = float(order.get("total", 0))
+        status = order.get("status", "Unknown")
+        tracking = order.get("tracking", "None")
+
+        lines.append(
+            f"• <b>Order #{order_id}</b>\n"
+            f"Status: {status}\n"
+            f"Total: £{total:.2f}\n"
+            f"Tracking: {tracking}\n"
+        )
+
+    await m.answer("\n".join(lines))
 
 
 @dp.message(F.text == "❓ Help")
@@ -462,6 +483,25 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
 
     db.clear_cart(uid)
     await state.clear()
+
+def get_user_orders(uid, limit=10):
+    """Fetch recent orders for a specific user from Supabase."""
+    if not supabase:
+        return []
+
+    try:
+        res = (
+            supabase.table("orders")
+            .select("id, total, status, tracking, items")
+            .eq("user_id", uid)
+            .order("id", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        logging.error(f"Order Fetch Error: {e}")
+        return []
 
 
 # -----------------------------
