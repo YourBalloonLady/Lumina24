@@ -20,9 +20,9 @@ DB_PATH = os.getenv("DATABASE_URL", "/app/data/store.db")
 MY_USERNAME = "@Admi_181" 
 
 # SUPABASE SETUP
-SUPA_URL = os.getenv("https://uehufwxfpgsuujtthfia.supabase.co")
-SUPA_KEY = os.getenv("sb_publishable_k5TyC0K4eq_QJcimNQIKBw_tGCS6Ivl")
-supabase: Client = create_client(SUPA_URL, SUPA_KEY)
+SUPABASE_URL = os.getenv("https://uehufwxfpgsuujtthfia.supabase.co")
+SUPABASE_KEY = os.getenv("sb_publishable_k5TyC0K4eq_QJcimNQIKBw_tGCS6Ivl")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BANK_DETAILS = """
 🏦 **PAYMENT DETAILS**
