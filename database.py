@@ -3,52 +3,69 @@ import os
 import logging
 from supabase import create_client, Client
 
+# Load environment variables
 SUPA_URL = os.getenv("SUPABASE_URL")
 SUPA_KEY = os.getenv("SUPABASE_KEY")
 DB_PATH = os.getenv("DATABASE_URL", "store.db")
 
+# Initialize Supabase
 supabase: Client = create_client(SUPA_URL, SUPA_KEY) if SUPA_URL else None
 
 def init_db():
+    """Initializes the local SQLite database for cart persistence."""
     conn = sqlite3.connect(DB_PATH)
-    # Local cart remains for speed/reliability
     conn.execute("""CREATE TABLE IF NOT EXISTS cart (
-        user_id INTEGER, product_id TEXT, quantity INTEGER,
+        user_id INTEGER, 
+        product_id TEXT, 
+        quantity INTEGER, 
         PRIMARY KEY (user_id, product_id))""")
     conn.commit()
     conn.close()
 
 async def get_live_products():
+    """Fetches all products from Supabase."""
     if not supabase: return {}
     try:
         res = supabase.table("products").select("*").execute()
+        # Maps the 'id' (item1, item2, etc.) to the product data
         return {p["id"]: p for p in res.data}
     except Exception as e:
-        logging.error(f"Supabase Product Error: {e}")
+        logging.error(f"Supabase Fetch Error: {e}")
         return {}
 
 def deduct_supabase_stock(cart_items):
+    """
+    Subtracts purchased quantities from Supabase.
+    cart_items: dict of {product_id: quantity}
+    """
     if not supabase: return
     try:
-        res = supabase.table("products").select("id", "stock").execute()
-        current_stock = {p["id"]: p["stock"] for p in res.data}
         for pid, qty in cart_items.items():
-            if pid in current_stock:
-                new_stock = max(0, current_stock[pid] - qty)
+            # 1. Get current stock for this specific ID (e.g., 'item1')
+            res = supabase.table("products").select("stock").eq("id", pid).single().execute()
+            if res.data:
+                current_stock = res.data.get('stock', 0)
+                new_stock = max(0, current_stock - qty)
+                
+                # 2. Update Supabase with the new value
                 supabase.table("products").update({"stock": new_stock}).eq("id", pid).execute()
+                print(f"✅ Stock Updated: {pid} is now {new_stock}")
+            else:
+                print(f"⚠️ Item {pid} not found in Supabase for stock deduction.")
     except Exception as e:
-        logging.error(f"Stock Deduction Error: {e}")
+        print(f"❌ Stock Deduction Failed: {e}")
 
 def save_order(uid, name, address, items, total):
+    """Saves the order to the Supabase 'orders' table."""
     if not supabase: return None
     try:
         data = {
-            "user_id": uid,
-            "customer_name": name,
-            "address": address,
-            "items": items,
-            "total": total,
-            "status": "Pending",
+            "user_id": uid, 
+            "customer_name": name, 
+            "address": address, 
+            "items": items, 
+            "total": total, 
+            "status": "Pending", 
             "tracking": "None"
         }
         res = supabase.table("orders").insert(data).execute()
@@ -58,15 +75,14 @@ def save_order(uid, name, address, items, total):
         return None
 
 def update_db_order(order_id, status=None, tracking=None):
+    """Updates status or tracking for an order in Supabase."""
     if not supabase: return
-    try:
-        upd = {}
-        if status: upd["status"] = status
-        if tracking: upd["tracking"] = tracking
-        supabase.table("orders").update(upd).eq("id", order_id).execute()
-    except Exception as e:
-        logging.error(f"Order Update Error: {e}")
+    upd = {}
+    if status: upd["status"] = status
+    if tracking: upd["tracking"] = tracking
+    supabase.table("orders").update(upd).eq("id", order_id).execute()
 
+# --- LOCAL CART FUNCTIONS ---
 def update_cart(uid, pid, delta):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
