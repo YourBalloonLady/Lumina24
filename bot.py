@@ -45,34 +45,7 @@ async def shop(m: Message):
     await m.answer("<b>📂 Select a Category:</b>", reply_markup=kb.category_kb())
 
 # --- CHECKOUT FLOW ---
-@dp.callback_query(F.data == "start_checkout")
-async def start_checkout(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    profile = db.get_profile(cb.from_user.id)
-
-    if profile:
-        text = (
-            "📋 <b>Checkout</b>\n"
-            "━━━━━━━━━━━━━━\n"
-            "🚚 <b>FREE Shipping</b>\n"
-            "📍 <b>Saved Address:</b>\n"
-            f"👤 {profile[0]}\n"
-            f"🏠 {profile[1]}\n"
-            f"🏙 {profile[2]}\n"
-            f"📮 {profile[3]}\n\n"
-            "Ship to this address?"
-        )
-        btns = [
-            [InlineKeyboardButton(text="✅ Use This Address", callback_data="use_saved")],
-            [InlineKeyboardButton(text="📝 New Address", callback_data="ask_name")],
-            [InlineKeyboardButton(text="❌ Cancel", callback_data="view_cart")],
-        ]
-        await cb.message.edit_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns)
-        )
-    else:
-        await ask_name(cb.message, state)
+@dp.callback_query(
 
 @dp.callback_query(F.data == "ask_name")
 async def ask_name_cb(cb: CallbackQuery, state: FSMContext):
@@ -80,70 +53,125 @@ async def ask_name_cb(cb: CallbackQuery, state: FSMContext):
     await ask_name(cb.message, state)
 
 async def ask_name(m: Message, state: FSMContext):
-    await m.answer("📋 <b>Step 2 — Full Name</b>\nPlease type your full name:")
+    await m.answer(
+        "📋 <b>Checkout</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "👤 <b>Step 1 — Full Name</b>\n\n"
+        "Please type your full name:"
+    )
     await state.set_state(Checkout.name)
+
 
 @dp.message(Checkout.name)
 async def get_name(m: Message, state: FSMContext):
-    await state.update_data(name=m.text)
-    await m.answer("🏠 <b>Step 3 — Street Address</b>\nEnter your house number and street:")
+    await state.update_data(name=m.text.strip())
+    await m.answer(
+        "📋 <b>Checkout</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "🏠 <b>Step 2 — Street Address</b>\n\n"
+        "Enter your house number and street:"
+    )
     await state.set_state(Checkout.street)
+
 
 @dp.message(Checkout.street)
 async def get_street(m: Message, state: FSMContext):
-    await state.update_data(street=m.text)
-    await m.answer("🏙 <b>Step 4 — City</b>\nEnter your city or town:")
+    await state.update_data(street=m.text.strip())
+    await m.answer(
+        "📋 <b>Checkout</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "🏙 <b>Step 3 — City</b>\n\n"
+        "Enter your city or town:"
+    )
     await state.set_state(Checkout.city)
+
 
 @dp.message(Checkout.city)
 async def get_city(m: Message, state: FSMContext):
-    await state.update_data(city=m.text)
-    await m.answer("📮 <b>Step 5 — Postcode</b>\nEnter your UK postcode:")
+    await state.update_data(city=m.text.strip())
+    await m.answer(
+        "📋 <b>Checkout</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "📮 <b>Step 4 — Postcode</b>\n\n"
+        "Enter your postcode:"
+    )
     await state.set_state(Checkout.postcode)
 
 @dp.message(Checkout.postcode)
 async def finalize_address(m: Message, state: FSMContext):
     data = await state.get_data()
-    db.save_profile(m.from_user.id, data["name"], data["street"], data["city"], m.text)
-    await show_summary(m, state, data["name"], f"{data['street']}, {data['city']} {m.text}")
+    postcode = m.text.strip()
+
+    db.save_profile(
+        m.from_user.id,
+        data["name"],
+        data["street"],
+        data["city"],
+        postcode
+    )
+
+    await show_summary(
+        m,
+        state,
+        data["name"],
+        data["street"],
+        data["city"],
+        postcode
+    )
 
 @dp.callback_query(F.data == "use_saved")
 async def use_saved_addr(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     p = db.get_profile(cb.from_user.id)
-    await show_summary(cb.message, state, p[0], f"{p[1]}, {p[2]} {p[3]}")
+    await show_summary(cb.message, state, p[0], p[1], p[2], p[3])
 
-async def show_summary(m, state: FSMContext, name: str, full_addr: str):
+async def show_summary(m, state: FSMContext, name: str, street: str, city: str, postcode: str):
     uid = m.chat.id
     cart = db.get_user_cart(uid)
     products = await db.get_live_products()
 
-    items_text = "\n".join(
-        [f"• {products[pid]['name']} ×{qty}" for pid, qty in cart.items() if pid in products]
-    )
-    total = sum(products[pid]["price"] * qty for pid, qty in cart.items() if pid in products)
+    items = []
+    total = 0
+
+    for pid, qty in cart.items():
+        if pid in products:
+            product = products[pid]
+            line_total = float(product["price"]) * qty
+            total += line_total
+            items.append(f"• {product['name']} ×{qty}\n£{line_total:.2f}")
+
+    items_text = "\n\n".join(items) if items else "No items in cart."
 
     summary = (
         "📋 <b>Order Summary</b>\n"
-        "━━━━━━━━━━━━━━\n"
-        f"👤 <b>{name}</b>\n"
-        f"📍 {full_addr}\n\n"
-        f"🧬 <b>Items</b>\n{items_text}\n\n"
-        "🚚 <b>FREE Shipping</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        f"👤 {name}\n"
+        f"📍 {street}, {city}\n"
+        f"{postcode}\n\n"
+        "🧬 <b>Items</b>\n"
+        f"{items_text}\n\n"
         "━━━━━━━━━━━━━━\n"
         f"💰 <b>Total: £{total:.2f}</b>\n\n"
-        "Please confirm to proceed to payment."
+        "Please confirm to proceed."
     )
 
     btns = [
-        [InlineKeyboardButton(text="✅ Confirm & Pay", callback_data="finish_order")],
-        [InlineKeyboardButton(text="❌ Cancel", callback_data="view_cart")],
+        [InlineKeyboardButton(text="✅ Confirm", callback_data="finish_order")],
+        [InlineKeyboardButton(text="🚚 Change Delivery", callback_data="ask_name")],
+        [
+            InlineKeyboardButton(text="✏️ Edit Cart", callback_data="view_cart"),
+            InlineKeyboardButton(text="❌ Cancel", callback_data="view_cart"),
+        ],
     ]
 
-    await m.answer(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
+    await m.answer(
+        summary,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns)
+    )
+
     await state.update_data(
         final_name=name,
-        final_addr=full_addr,
+        final_addr=f"{street}, {city} {postcode}",
         final_total=total,
         final_items=items_text,
     )
@@ -156,7 +184,6 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     cart = db.get_user_cart(uid)
 
-    # 1. Stock & DB
     db.deduct_supabase_stock(cart)
     oid = db.save_order(
         uid,
@@ -166,12 +193,13 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
         data["final_total"],
     )
 
-    # 2. Customer notify
     await cb.message.edit_text(
-        f"🏁 <b>Order #{oid} Logged!</b>\n\n{BANK_DETAILS}"
+        f"✅ <b>Order #{oid} Logged</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "Your order has been received.\n"
+        "We’ll contact you with the next update shortly."
     )
 
-    # 3. Admin notify
     admin_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Paid", callback_data=f"adm_p_{oid}_{uid}")],
@@ -181,11 +209,11 @@ async def finish_order(cb: CallbackQuery, state: FSMContext):
 
     await cb.bot.send_message(
         ADMIN_ID,
-        f"🔔 <b>NEW ORDER #{oid}</b>\n"
+        f"🔔 <b>NEW ORDER #{oid}</b>\n\n"
         f"👤 {data['final_name']}\n"
         f"📍 {data['final_addr']}\n\n"
         f"{data['final_items']}\n\n"
-        f"Total: £{data['final_total']}",
+        f"💰 Total: £{data['final_total']:.2f}",
         reply_markup=admin_kb,
     )
 
